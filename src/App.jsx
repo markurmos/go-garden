@@ -457,48 +457,118 @@ export default function SmartGardenPlanner() {
 
   // Camera and Plant Identification Functions
   const takePhoto = () => {
-    // Create file input for camera
-    const input = document.createElement('input');
-    input.type = 'file';
-    input.accept = 'image/*';
-    input.capture = 'environment'; // Use rear camera on mobile
-    
-    input.onchange = (event) => {
-      const file = event.target.files[0];
-      if (file) {
-        setIsIdentifying(true);
-        const reader = new FileReader();
-        reader.onload = (e) => {
-          identifyPlant(e.target.result, file);
-        };
-        reader.readAsDataURL(file);
-      }
-    };
-    
-    input.click();
-    setShowCameraModal(false);
+    try {
+      console.log('Taking photo...');
+      // Create file input for camera
+      const input = document.createElement('input');
+      input.type = 'file';
+      input.accept = 'image/*';
+      input.capture = 'environment'; // Use rear camera on mobile
+      
+      input.onchange = (event) => {
+        try {
+          const file = event.target.files[0];
+          console.log('File selected:', file);
+          
+          if (file) {
+            // Validate file type
+            if (!file.type.startsWith('image/')) {
+              showNotification('Invalid File', 'Please select an image file.', 'error');
+              return;
+            }
+            
+            // Validate file size (max 10MB)
+            if (file.size > 10 * 1024 * 1024) {
+              showNotification('File Too Large', 'Please select an image smaller than 10MB.', 'error');
+              return;
+            }
+            
+            setIsIdentifying(true);
+            const reader = new FileReader();
+            
+            reader.onerror = (error) => {
+              console.error('FileReader error:', error);
+              setIsIdentifying(false);
+              showNotification('File Read Error', 'Could not read the selected image.', 'error');
+            };
+            
+            reader.onload = (e) => {
+              console.log('File read successfully, starting identification...');
+              identifyPlant(e.target.result, file);
+            };
+            
+            reader.readAsDataURL(file);
+          }
+        } catch (error) {
+          console.error('Error in file selection:', error);
+          setIsIdentifying(false);
+          showNotification('Upload Error', 'Failed to process the selected image.', 'error');
+        }
+      };
+      
+      input.click();
+      setShowCameraModal(false);
+    } catch (error) {
+      console.error('Error in takePhoto:', error);
+      showNotification('Camera Error', 'Could not access camera functionality.', 'error');
+    }
   };
 
   const pickFromGallery = () => {
-    // Create file input for gallery
-    const input = document.createElement('input');
-    input.type = 'file';
-    input.accept = 'image/*';
-    
-    input.onchange = (event) => {
-      const file = event.target.files[0];
-      if (file) {
-        setIsIdentifying(true);
-        const reader = new FileReader();
-        reader.onload = (e) => {
-          identifyPlant(e.target.result, file);
-        };
-        reader.readAsDataURL(file);
-      }
-    };
-    
-    input.click();
-    setShowCameraModal(false);
+    try {
+      console.log('Picking from gallery...');
+      // Create file input for gallery
+      const input = document.createElement('input');
+      input.type = 'file';
+      input.accept = 'image/*';
+      
+      input.onchange = (event) => {
+        try {
+          const file = event.target.files[0];
+          console.log('File selected from gallery:', file);
+          
+          if (file) {
+            // Validate file type
+            if (!file.type.startsWith('image/')) {
+              showNotification('Invalid File', 'Please select an image file.', 'error');
+              return;
+            }
+            
+            // Validate file size (max 10MB)
+            if (file.size > 10 * 1024 * 1024) {
+              showNotification('File Too Large', 'Please select an image smaller than 10MB.', 'error');
+              return;
+            }
+            
+            setIsIdentifying(true);
+            const reader = new FileReader();
+            
+            reader.onerror = (error) => {
+              console.error('FileReader error:', error);
+              setIsIdentifying(false);
+              showNotification('File Read Error', 'Could not read the selected image.', 'error');
+            };
+            
+            reader.onload = (e) => {
+              console.log('File read successfully from gallery, starting identification...');
+              identifyPlant(e.target.result, file);
+            };
+            
+            reader.readAsDataURL(file);
+          }
+        } catch (error) {
+          console.error('Error in gallery file selection:', error);
+          setIsIdentifying(false);
+          showNotification('Upload Error', 'Failed to process the selected image.', 'error');
+        }
+      };
+      
+      input.click();
+      setShowCameraModal(false);
+    } catch (error) {
+      console.error('Error in pickFromGallery:', error);
+      showNotification('Gallery Error', 'Could not access gallery functionality.', 'error');
+    }
   };
 
   // Convert image to base64 for Plant.id API
@@ -519,66 +589,47 @@ export default function SmartGardenPlanner() {
     setIsIdentifying(true);
     
     try {
-      console.log('Starting plant identification with PlantNet...');
+      console.log('Starting plant identification with PlantNet via proxy...');
       
-      // Create FormData for PlantNet API
-      const formData = new FormData();
-      formData.append('images', file);
-      formData.append('organs', 'leaf');
-      formData.append('modifiers', 'flower,fruit');
-      formData.append('include-related-images', 'false');
-      formData.append('no-reject', 'false');
-      formData.append('lang', 'en');
-
-      // PlantNet API call
-      const response = await fetch(
-        'https://my-api.plantnet.org/v1/identify/worldwide?api-key=2b10VhJE8nNEGRdKjz3L9JXVf',
-        {
-          method: 'POST',
-          body: formData,
-        }
-      );
-
-      if (!response.ok) {
-        throw new Error(`PlantNet API error: ${response.status} - ${response.statusText}`);
-      }
+      // Convert image to base64
+      const imageBase64 = await convertImageToBase64(file);
+      
+      // Call our serverless proxy function
+      const response = await fetch('/api/plantnet-identify', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          imageBase64: imageBase64
+        })
+      });
 
       const data = await response.json();
       
-      if (data.results && data.results.length > 0) {
-        // Filter results with reasonable confidence (>5%)
-        const goodResults = data.results.filter(result => result.score > 0.05);
+      if (data.success && data.result) {
+        setIdentificationResult({
+          ...data.result,
+          image: imageDataUrl
+        });
         
-        if (goodResults.length > 0) {
-          const topResult = goodResults[0];
-          
-          setIdentificationResult({
-            scientificName: topResult.species.scientificNameWithoutAuthor,
-            commonName: topResult.species.commonNames?.[0] || topResult.species.scientificNameWithoutAuthor,
-            confidence: Math.round(topResult.score * 100),
-            allResults: goodResults.slice(0, 3), // Top 3 results
-            source: 'PlantNet',
-            image: imageDataUrl
-          });
-          
-          showNotification(
-            'Plant Identified!', 
-            `Found: ${topResult.species.commonNames?.[0] || topResult.species.scientificNameWithoutAuthor} (${Math.round(topResult.score * 100)}% confidence)`,
-            'success'
-          );
-        } else {
-          throw new Error('No confident plant identification found (all results below 5% confidence)');
-        }
+        showNotification(
+          'Plant Identified!', 
+          `Found: ${data.result.commonName} (${data.result.confidence}% confidence)`,
+          'success'
+        );
       } else {
-        throw new Error('No plant identification results returned');
+        throw new Error(data.error || 'Identification failed');
       }
       
     } catch (error) {
       console.error('Plant identification error:', error);
       
       let errorMessage = 'Could not identify this plant. ';
-      if (error.message.includes('API error')) {
+      if (error.message.includes('API error') || error.message.includes('500')) {
         errorMessage += 'Service temporarily unavailable. ';
+      } else if (error.message.includes('CORS') || error.message.includes('network')) {
+        errorMessage += 'Connection issue. ';
       }
       errorMessage += 'Try a clearer photo with visible leaves or flowers.';
       
