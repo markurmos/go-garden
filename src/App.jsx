@@ -519,45 +519,72 @@ export default function SmartGardenPlanner() {
     setIsIdentifying(true);
     
     try {
-      console.log('Starting plant identification...');
+      console.log('Starting plant identification with PlantNet...');
       
-      // Convert image to base64
-      const imageBase64 = await convertImageToBase64(file);
-      
-      // Call our serverless function for secure API handling
-      const response = await fetch('/api/identify-plant', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          imageBase64: imageBase64,
-          service: 'plantid' // Try Plant.id first, then fallback to PlantNet
-        })
-      });
+      // Create FormData for PlantNet API
+      const formData = new FormData();
+      formData.append('images', file);
+      formData.append('organs', 'leaf');
+      formData.append('modifiers', 'flower,fruit');
+      formData.append('include-related-images', 'false');
+      formData.append('no-reject', 'false');
+      formData.append('lang', 'en');
+
+      // PlantNet API call
+      const response = await fetch(
+        'https://my-api.plantnet.org/v1/identify/worldwide?api-key=2b10VhJE8nNEGRdKjz3L9JXVf',
+        {
+          method: 'POST',
+          body: formData,
+        }
+      );
+
+      if (!response.ok) {
+        throw new Error(`PlantNet API error: ${response.status} - ${response.statusText}`);
+      }
 
       const data = await response.json();
       
-      if (data.success && data.result) {
-        setIdentificationResult({
-          ...data.result,
-          image: imageDataUrl
-        });
+      if (data.results && data.results.length > 0) {
+        // Filter results with reasonable confidence (>5%)
+        const goodResults = data.results.filter(result => result.score > 0.05);
         
-        showNotification(
-          'Plant Identified!', 
-          `Found: ${data.result.commonName} (${data.result.confidence}% confidence via ${data.result.source})`,
-          'success'
-        );
+        if (goodResults.length > 0) {
+          const topResult = goodResults[0];
+          
+          setIdentificationResult({
+            scientificName: topResult.species.scientificNameWithoutAuthor,
+            commonName: topResult.species.commonNames?.[0] || topResult.species.scientificNameWithoutAuthor,
+            confidence: Math.round(topResult.score * 100),
+            allResults: goodResults.slice(0, 3), // Top 3 results
+            source: 'PlantNet',
+            image: imageDataUrl
+          });
+          
+          showNotification(
+            'Plant Identified!', 
+            `Found: ${topResult.species.commonNames?.[0] || topResult.species.scientificNameWithoutAuthor} (${Math.round(topResult.score * 100)}% confidence)`,
+            'success'
+          );
+        } else {
+          throw new Error('No confident plant identification found (all results below 5% confidence)');
+        }
       } else {
-        throw new Error(data.error || 'Identification failed');
+        throw new Error('No plant identification results returned');
       }
       
     } catch (error) {
       console.error('Plant identification error:', error);
+      
+      let errorMessage = 'Could not identify this plant. ';
+      if (error.message.includes('API error')) {
+        errorMessage += 'Service temporarily unavailable. ';
+      }
+      errorMessage += 'Try a clearer photo with visible leaves or flowers.';
+      
       showNotification(
         'Identification Failed', 
-        error.message || 'Could not identify this plant. Try a clearer photo with visible leaves or flowers.',
+        errorMessage,
         'error'
       );
     } finally {
@@ -665,29 +692,12 @@ export default function SmartGardenPlanner() {
               </span>
             </div>
 
-            {/* Show additional details from Plant.id API */}
-            {identificationResult.details?.description && (
-              <div style={styles.identificationDetails}>
-                <p style={styles.detailText}>{identificationResult.details.description}</p>
-              </div>
-            )}
-
-            {identificationResult.details?.edible_parts?.length > 0 && (
-              <div style={styles.edibleInfo}>
-                <p style={styles.edibleTitle}>🌿 Edible parts:</p>
-                <p style={styles.edibleText}>
-                  {identificationResult.details.edible_parts.join(', ')}
-                </p>
-              </div>
-            )}
-            
             {identificationResult.allResults?.length > 1 && (
               <div style={styles.alternativeResults}>
                 <p style={styles.alternativeTitle}>Other possibilities:</p>
                 {identificationResult.allResults.slice(1).map((result, index) => {
-                  // Handle both Plant.id and PlantNet result formats
-                  const name = result.name || result.species?.commonNames?.[0] || result.species?.scientificNameWithoutAuthor;
-                  const confidence = result.probability ? Math.round(result.probability * 100) : Math.round(result.score * 100);
+                  const name = result.species?.commonNames?.[0] || result.species?.scientificNameWithoutAuthor;
+                  const confidence = Math.round(result.score * 100);
                   
                   return (
                     <p key={index} style={styles.alternativeText}>
