@@ -501,50 +501,65 @@ export default function SmartGardenPlanner() {
     setShowCameraModal(false);
   };
 
+  // Convert image to base64 for Plant.id API
+  const convertImageToBase64 = (file) => {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => {
+        // Remove data:image/jpeg;base64, prefix to get clean base64
+        const base64 = reader.result.split(',')[1];
+        resolve(base64);
+      };
+      reader.onerror = reject;
+      reader.readAsDataURL(file);
+    });
+  };
+
   const identifyPlant = async (imageDataUrl, file) => {
+    setIsIdentifying(true);
+    
     try {
-      // Create FormData for PlantNet API
-      const formData = new FormData();
-      formData.append('images', file);
-      formData.append('organs', 'leaf');
-      formData.append('modifiers', 'flower,fruit');
-      formData.append('include-related-images', 'false');
-      formData.append('no-reject', 'false');
-      formData.append('lang', 'en');
+      console.log('Starting plant identification...');
+      
+      // Convert image to base64
+      const imageBase64 = await convertImageToBase64(file);
+      
+      // Call our serverless function for secure API handling
+      const response = await fetch('/api/identify-plant', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          imageBase64: imageBase64,
+          service: 'plantid' // Try Plant.id first, then fallback to PlantNet
+        })
+      });
 
-      // PlantNet API call
-      const response = await fetch(
-        'https://my-api.plantnet.org/v1/identify/worldwide?api-key=2b10VhJE8nNEGRdKjz3L9JXVf',
-        {
-          method: 'POST',
-          body: formData,
-        }
-      );
-
-      if (response.ok) {
-        const data = await response.json();
-        if (data.results && data.results.length > 0) {
-          const topResult = data.results[0];
-          const plantName = topResult.species.scientificNameWithoutAuthor;
-          const commonNames = topResult.species.commonNames;
-          const confidence = Math.round(topResult.score * 100);
-          
-          setIdentificationResult({
-            scientificName: plantName,
-            commonName: commonNames?.[0] || plantName,
-            confidence: confidence,
-            image: imageDataUrl,
-            allResults: data.results.slice(0, 3) // Top 3 results
-          });
-        } else {
-          showNotification('No Match', 'Could not identify this plant. Try a clearer photo with visible leaves or flowers.', 'error');
-        }
+      const data = await response.json();
+      
+      if (data.success && data.result) {
+        setIdentificationResult({
+          ...data.result,
+          image: imageDataUrl
+        });
+        
+        showNotification(
+          'Plant Identified!', 
+          `Found: ${data.result.commonName} (${data.result.confidence}% confidence via ${data.result.source})`,
+          'success'
+        );
       } else {
-        throw new Error('API request failed');
+        throw new Error(data.error || 'Identification failed');
       }
+      
     } catch (error) {
       console.error('Plant identification error:', error);
-      showNotification('Identification Failed', 'Could not identify the plant. Please check your internet connection and try again.', 'error');
+      showNotification(
+        'Identification Failed', 
+        error.message || 'Could not identify this plant. Try a clearer photo with visible leaves or flowers.',
+        'error'
+      );
     } finally {
       setIsIdentifying(false);
     }
@@ -640,19 +655,46 @@ export default function SmartGardenPlanner() {
             <p style={styles.scientificName}>
               {identificationResult.scientificName}
             </p>
-            <p style={styles.confidenceText}>
-              {identificationResult.confidence}% confidence
-            </p>
+            
+            <div style={styles.identificationMeta}>
+              <span style={styles.confidenceText}>
+                {identificationResult.confidence}% confidence
+              </span>
+              <span style={styles.sourceText}>
+                via {identificationResult.source}
+              </span>
+            </div>
+
+            {/* Show additional details from Plant.id API */}
+            {identificationResult.details?.description && (
+              <div style={styles.identificationDetails}>
+                <p style={styles.detailText}>{identificationResult.details.description}</p>
+              </div>
+            )}
+
+            {identificationResult.details?.edible_parts?.length > 0 && (
+              <div style={styles.edibleInfo}>
+                <p style={styles.edibleTitle}>🌿 Edible parts:</p>
+                <p style={styles.edibleText}>
+                  {identificationResult.details.edible_parts.join(', ')}
+                </p>
+              </div>
+            )}
             
             {identificationResult.allResults?.length > 1 && (
               <div style={styles.alternativeResults}>
                 <p style={styles.alternativeTitle}>Other possibilities:</p>
-                {identificationResult.allResults.slice(1).map((result, index) => (
-                  <p key={index} style={styles.alternativeText}>
-                    • {result.species.commonNames?.[0] || result.species.scientificNameWithoutAuthor} 
-                    ({Math.round(result.score * 100)}%)
-                  </p>
-                ))}
+                {identificationResult.allResults.slice(1).map((result, index) => {
+                  // Handle both Plant.id and PlantNet result formats
+                  const name = result.name || result.species?.commonNames?.[0] || result.species?.scientificNameWithoutAuthor;
+                  const confidence = result.probability ? Math.round(result.probability * 100) : Math.round(result.score * 100);
+                  
+                  return (
+                    <p key={index} style={styles.alternativeText}>
+                      • {name} ({confidence}%)
+                    </p>
+                  );
+                })}
               </div>
             )}
             
@@ -1832,5 +1874,53 @@ const styles = {
     color: 'white',
     fontSize: '16px',
     fontWeight: '600',
+  },
+  // Enhanced Plant Identification Modal Styles
+  identificationMeta: {
+    display: 'flex',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: '16px',
+    gap: '12px',
+  },
+  sourceText: {
+    fontSize: '12px',
+    color: '#6b7280',
+    backgroundColor: '#f3f4f6',
+    padding: '4px 8px',
+    borderRadius: '12px',
+    fontWeight: '500',
+  },
+  identificationDetails: {
+    backgroundColor: '#f8fafc',
+    padding: '12px',
+    borderRadius: '8px',
+    marginBottom: '16px',
+    border: '1px solid #e2e8f0',
+  },
+  detailText: {
+    fontSize: '14px',
+    color: '#475569',
+    lineHeight: '20px',
+    margin: 0,
+  },
+  edibleInfo: {
+    backgroundColor: '#dcfce7',
+    padding: '12px',
+    borderRadius: '8px',
+    marginBottom: '16px',
+    border: '1px solid #bbf7d0',
+  },
+  edibleTitle: {
+    fontSize: '14px',
+    fontWeight: '600',
+    color: '#166534',
+    margin: '0 0 4px 0',
+  },
+  edibleText: {
+    fontSize: '14px',
+    color: '#15803d',
+    margin: 0,
+    fontWeight: '500',
   },
 };

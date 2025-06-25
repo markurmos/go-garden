@@ -1,4 +1,9 @@
 {
   "buildCommand": "npm run build",
-  "installCommand": "npm install"
+  "installCommand": "npm install",
+  "functions": {
+    "api/identify-plant.js": {
+      "maxDuration": 30
+    }
+  }
 }
